@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+SRC_DIR=$1
+echo "SRC_DIR:             $SRC_DIR" 1>&2
+echo "BUILD_ID:	           $BUILD_ID" 1>&2
+echo "BUILD_NAME:          $BUILD_NAME" 1>&2
+echo "BUILD_JOB_NAME:      $BUILD_JOB_NAME" 1>&2
+echo "BUILD_PIPELINE_NAME: $BUILD_PIPELINE_NAME" 1>&2
+echo "BUILD_TEAM_NAME:     $BUILD_TEAM_NAME" 1>&2
+echo "ATC_EXTERNAL_URL:    $ATC_EXTERNAL_URL" 1>&2
+
+cd $SRC_DIR
+exec 3>&1 # make stdout available as fd 3 for the result
+exec 1>&2 # redirect all output to stderr for logging
+
+SCRIPT_INPUT='/tmp/input'
+cat > $SCRIPT_INPUT <&0 # STDIN params
+
+ENDPOINT=$(jq -r '.source.endpoint // ""' < $SCRIPT_INPUT)
+accessKeyID=$(jq -r '.source.accessKeyID // ""' < $SCRIPT_INPUT)
+accessKeySecret=$(jq -r '.source.accessKeySecret // ""' < $SCRIPT_INPUT)
+CMDS=$(jq -r '.params.cmds + [.params.cmd]|join(",")'< $SCRIPT_INPUT)
+#echo $SCRIPT_INPUT  1>&2
+echo "input fields: $(jq -r '.'< $SCRIPT_INPUT)" 1>&2
+echo "cmds:   $CMDS"         1>&2
+
+echo "+ /util_modules/ossutil32 config -e $ENDPOINT -i $accessKeyID -k $accessKeySecret -L CH -c myconfig" 1>&2
+eval "/util_modules/ossutil32 config -e $ENDPOINT -i $accessKeyID -k $accessKeySecret -L CH -c myconfig" 1>&2
+
+if [ -n "$CMDS" ]
+then
+	IFS=,;
+	for CMD in $CMDS; 
+	do 
+		OSS_CMD="/util_modules/ossutil32 --config-file myconfig $CMD";
+        echo "+ $OSS_CMD" 1>&2;
+        eval $OSS_CMD 1>&2;
+	done;
+else
+    echo "CMDS are empty" 1>&2
+fi
+
+jq -n "{
+  version: {
+    CMDS: \"$CMDS\"
+  }
+}" >&3

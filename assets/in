@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+set -e
+
+exec 3>&1 # make stdout available as fd 3 for the result
+exec 1>&2 # redirect all output to stderr for logging
+
+source $(dirname $0)/common.sh
+
+SRC_DIR=$1
+echo "SRC_DIR:             $SRC_DIR" 1>&2
+echo "BUILD_ID:	           $BUILD_ID" 1>&2
+echo "BUILD_NAME:          $BUILD_NAME" 1>&2
+echo "BUILD_JOB_NAME:      $BUILD_JOB_NAME" 1>&2
+echo "BUILD_PIPELINE_NAME: $BUILD_PIPELINE_NAME" 1>&2
+echo "BUILD_TEAM_NAME:     $BUILD_TEAM_NAME" 1>&2
+echo "ATC_EXTERNAL_URL:    $ATC_EXTERNAL_URL" 1>&2
+
+payload=$(mktemp $TMPDIR/git-resource-request.XXXXXX) # STDIN params
+cat > $payload <&0
+load_pubkey $payload
+
+ENDPOINT=$(jq -r '.source.endpoint // ""' < $payload)
+accessKeyID=$(jq -r '.source.accessKeyID // ""' < $payload)
+accessKeySecret=$(jq -r '.source.accessKeySecret // ""' < $payload)
+git_private_key=$(jq -r '.source.git_private_key // ""' < $payload)
+git_url=$(jq -r '.params.git_url // ""' < $payload)
+
+echo "input fields: $(jq -r '.'< $payload)" 1>&2
+echo "git_url: $git_url"
+
+if [ -n "$git_url" ]
+then
+    mkdir -p $SRC_DIR/git_source
+    echo "git clone --single-branch --depth=1 $git_url --branch master $SRC_DIR/git_source"
+    git clone --single-branch --depth=1 $git_url --branch master $SRC_DIR/git_source
+	
+    prefix_dir=$(jq -r '.params.prefix_dir'< $payload)
+    deploy_hash=$(cat $SRC_DIR/git_source/deploy_hash)
+    url_to_download="$prefix_dir/$deploy_hash/"
+    echo "prefix_dir:   $prefix_dir"           1>&2
+    echo "deploy_hash:   $deploy_hash"         1>&2
+    echo "url_to_download:   $url_to_download" 1>&2
+
+	if [ -n "$prefix_dir" ]
+    then
+        rm -rf $SRC_DIR/git_source
+        echo "+ /util_modules/ossutil32 config -e $ENDPOINT -i $accessKeyID -k $accessKeySecret -L CH -c myconfig" 1>&2
+        eval "/util_modules/ossutil32 config -e $ENDPOINT -i $accessKeyID -k $accessKeySecret -L CH -c myconfig" 1>&2
+
+        OSS_CMD="/util_modules/ossutil32 --config-file myconfig cp -r $url_to_download $SRC_DIR";
+        echo "+ $OSS_CMD" 1>&2;
+        eval $OSS_CMD 1>&2;
+    else
+        echo "prefix_dir is null" 1>&2;
+    fi
+else
+    echo "git_url is null"
+fi
+
+jq -n "{
+  version: {
+    OSS_CMD: \"$OSS_CMD\"
+  }
+}" >&3
